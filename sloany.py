@@ -5,7 +5,7 @@
 sloany
 ======
 
-A command line utility to query the SDSS database and retreive spectra files.
+A command line utility to query the SDSS database and retrieve spectra files.
 
 This utility is inspired by sqlcl.py by Tamas Budavari <budavari@jhu.edu>.
 
@@ -26,7 +26,7 @@ Options
 
 __author__ = "Loïc Séguin-C. <loicseguin@gmail.com>"
 __license__ = "BSD"
-__version__ = '0.1'
+__version__ = '0.1dev'
 
 
 import argparse
