@@ -107,13 +107,14 @@ def exec_query(query):
     return results
 
 
-def fetch_spectra(spec_files):
-    """Fetch the spectra for all objects in spec_files. Ask user confirmation
+def fetch_spectra(spec_triples):
+    """Fetch the spectra for all objects in spec_triples. Ask user confirmation
     first.
-    
-    ``spec_files`` is a list of triples (filename, plate, survey).
-    
+
+    ``spec_triples`` is a list of triples (filename, plate, survey).
+
     """
+    spec_files = list(spec_triples)
     existing = []
     for specfile in spec_files:
         if os.path.exists(specfile[0]):
@@ -121,14 +122,18 @@ def fetch_spectra(spec_files):
 
     # Ask user if he wants to fetch the spectra.
     if existing:
-        print('Some spectra seem to be already present in the current ' +
+        print('\nSome spectra seem to be already present in the current ' +
               'directory.\nDo you want to fetch all spectra [A], ' +
               'only the missing spectra [Y], or nothing [N].')
-        for specfile in spec_files:
-            if specfile in existing:
-                print(specfile[0] + '\tExisting')
-            else:
-                print(specfile[0])
+        if len(spec_files) <= 10:
+            for specfile in spec_files:
+                if specfile in existing:
+                    print(specfile[0] + '\tExisting')
+                else:
+                    print(specfile[0])
+        else:
+            print("{} spectra files".format(len(spec_files)))
+            print("{} existing files".format(len(existing)))
         answer = input('A/Y/N [Y]:  ')
         answer = answer or 'Y'
         if answer.upper() in ('Y', 'YES'):
@@ -137,9 +142,12 @@ def fetch_spectra(spec_files):
         if answer.upper() in ('A', 'ALL'):
             answer = 'Y'
     else:
-        print('Do you want to fetch the following spectra?')
-        for specfile in spec_files:
-            print(specfile[0])
+        print('\nDo you want to fetch the following spectra?')
+        if len(spec_files) <= 10:
+            for specfile in spec_files:
+                print(specfile[0])
+        else:
+            print("{} spectra files".format(len(spec_files)))
         answer = input('Y/N [Y]:  ')
         answer = answer or 'Y'
 
@@ -161,10 +169,13 @@ def fetch_spectra(spec_files):
 def reduce_spectra(files):
     """Produce a clean text file containing the spectra for each file in
     files."""
-    print('Do you want to reduce the following spectra?')
-    for fname in files:
-        if fname:
-            print(fname)
+    print('\nDo you want to reduce the following spectra?')
+    if len(files) <= 10:
+        for fname in files:
+            if fname:
+                print(fname)
+    else:
+        print("{} spectra files".format(len(files)))
     answer = input('Y/N [Y]:  ')
     answer = answer or 'Y'
     if answer.upper() not in ('Y', 'YES'):
@@ -172,6 +183,7 @@ def reduce_spectra(files):
     for fname in files:
         if not fname:
             continue
+        print('Reducing {}'.format(fname))
         f = pyfits.open(fname)
         coadd = f[1]
         fluxes = coadd.data.field('flux')
@@ -198,6 +210,24 @@ def write_flux(fname, wavs, flux):
     return
 
 
+def print_results(results):
+    """Print the results of the query."""
+    if not results:
+        print('Query returned no results')
+        return
+    keys = results[0].keys()
+    for key in keys:
+        print('{:<15}'.format(key), end='')
+    print()
+    for key in keys:
+        print('{:<15}'.format(14*'='), end='')
+    print()
+    for result in results:
+        for key in keys:
+            print('{:<15}'.format(result[key]), end='')
+        print()
+
+
 def run(argv=sys.argv[1:]):
     """Parse the command line arguments and run the appropriate command."""
     clparser = argparse.ArgumentParser(
@@ -208,6 +238,10 @@ def run(argv=sys.argv[1:]):
             help='SQL query to execute on the skyserver')
     clparser.add_argument('filenames', help='files containing SQL commands to be'
             + ' executed on the skyserver', nargs='*')
+    clparser.add_argument('-f', '--fetch', action='store_true',
+            help='fetch the spectrum file for each object')
+    clparser.add_argument('-r', '--reduce', action='store_true',
+            help='create a file with the wavelengths and fluxes')
     args = clparser.parse_args(argv)
 
     # Make a list of all queries.
@@ -232,13 +266,23 @@ def run(argv=sys.argv[1:]):
         if not results:
             print('ERROR: query did not provide any results.', file=sys.stderr)
             sys.exit(1)
-        spec_files = []
-        for obj in results:
-            specfile = ('spec-%04d-%05d-%04d.fits' %
-                    (int(obj['plate']), int(obj['mjd']), int(obj['fiberid'])))
-            spec_files.append((specfile, obj['plate'], obj.get('survey')))
-        fetch_spectra(spec_files)
-        reduce_spectra([fname for fname, plate, survey in spec_files])
+        print_results(results)
+        if args.fetch or args.reduce:
+            spec_files = []
+            for obj in results:
+                try:
+                    specfile = ('spec-%04d-%05d-%04d.fits' %
+                                (int(obj['plate']), int(obj['mjd']),
+                                int(obj['fiberid'])))
+                    spec_files.append((specfile, obj['plate'],
+                                       obj.get('survey')))
+                except KeyError:
+                    print(results)
+                    sys.exit(1)
+        if args.fetch:
+            fetch_spectra(spec_files)
+        if args.reduce:
+            reduce_spectra([fname for fname, plate, survey in spec_files])
 
 
 if __name__=='__main__':
