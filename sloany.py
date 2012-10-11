@@ -30,7 +30,8 @@ __version__ = '0.1'
 
 
 import argparse
-import subprocess
+import os
+import pyfits
 import sys
 import urllib.request
 import urllib.parse
@@ -106,23 +107,95 @@ def exec_query(query):
     return results
 
 
-def fetch_spectra(objs):
-    """Fetch the spectra for all objects in objs. Ask user confirmation
-    first."""
-    # Ask user if he wants to fetch the spectra.
-    print('Do you want to fetch the following spectra?')
-    for obj in objs:
-        print(obj)
-    answer = input('Y/N? ')
+def fetch_spectra(spec_files):
+    """Fetch the spectra for all objects in spec_files. Ask user confirmation
+    first.
+    
+    ``spec_files`` is a list of triples (filename, plate, survey).
+    
+    """
+    existing = []
+    for specfile in spec_files:
+        if os.path.exists(specfile[0]):
+            existing.append(specfile)
 
-    if answer.upper() != 'Y':
+    # Ask user if he wants to fetch the spectra.
+    if existing:
+        print('Some spectra seem to be already present in the current ' +
+              'directory.\nDo you want to fetch all spectra [A], ' +
+              'only the missing spectra [Y], or nothing [N].')
+        for specfile in spec_files:
+            if specfile in existing:
+                print(specfile[0] + '\tExisting')
+            else:
+                print(specfile[0])
+        answer = input('A/Y/N [Y]:  ')
+        answer = answer or 'Y'
+        if answer.upper() in ('Y', 'YES'):
+            for specfile in existing:
+                spec_files.remove(specfile)
+        if answer.upper() in ('A', 'ALL'):
+            answer = 'Y'
+    else:
+        print('Do you want to fetch the following spectra?')
+        for specfile in spec_files:
+            print(specfile[0])
+        answer = input('Y/N [Y]:  ')
+        answer = answer or 'Y'
+
+    if answer.upper() not in ('Y', 'YES'):
         return
-    for obj in objs:
-        specfile = ('spec-%s-%s-%s.fits' %
-                    (obj['plate'], obj['mjd'], obj['fiberid']))
-        url = boss_url + '/%s/' % obj['plate'] + specfile
-        print('Fetching %s...' % specfile)
-        subprocess.call(['curl', '-O', url])
+    for specfile in spec_files:
+        if specfile[2].upper() == 'BOSS':
+            url = boss_url + '/%s/' % specfile[1] + specfile[0]
+        elif specfile[2].upper() == 'SDSS':
+            url = sdss_url + '/%s/' % specfile[1] + specfile[0]
+        print('Fetching %s...' % specfile[0])
+        try:
+            urllib.request.urlretrieve(url, specfile[0])
+        except (ValueError, IOError):
+            print('WARNING: Could not retrieve %s.' % specfile[0],
+                    file=sys.stderr)
+
+
+def reduce_spectra(files):
+    """Produce a clean text file containing the spectra for each file in
+    files."""
+    print('Do you want to reduce the following spectra?')
+    for fname in files:
+        if fname:
+            print(fname)
+    answer = input('Y/N [Y]:  ')
+    answer = answer or 'Y'
+    if answer.upper() not in ('Y', 'YES'):
+        return
+    for fname in files:
+        if not fname:
+            continue
+        f = pyfits.open(fname)
+        coadd = f[1]
+        fluxes = coadd.data.field('flux')
+        wavs = 10**coadd.data.field('loglam')
+        assert len(fluxes) == len(wavs)
+        out_fname = os.path.splitext(os.path.basename(fname))[0] + '_red'
+        write_flux(out_fname, wavs, fluxes)
+
+
+def write_flux(fname, wavs, flux):
+    """Write the flux to file named fname in a format that fitchi2 understands."""
+    f = open(fname, 'w')
+    f.write(str(len(wavs)))
+    for i, wav in enumerate(wavs):
+        if i % 10 == 0:
+            f.write('\n')
+        f.write('%10.2f' % wav)
+    for i, fluxi in enumerate(flux):
+        if i % 6 == 0:
+            f.write('\n')
+        f.write('%12.5e' % fluxi)
+    f.write('\n')
+    f.close()
+    return
 
 
 def run(argv=sys.argv[1:]):
@@ -159,7 +232,13 @@ def run(argv=sys.argv[1:]):
         if not results:
             print('ERROR: query did not provide any results.', file=sys.stderr)
             sys.exit(1)
-        fetch_spectra(results)
+        spec_files = []
+        for obj in results:
+            specfile = ('spec-%04d-%05d-%04d.fits' %
+                    (int(obj['plate']), int(obj['mjd']), int(obj['fiberid'])))
+            spec_files.append((specfile, obj['plate'], obj.get('survey')))
+        fetch_spectra(spec_files)
+        reduce_spectra([fname for fname, plate, survey in spec_files])
 
 
 if __name__=='__main__':
