@@ -1,4 +1,5 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
+#-*- coding: utf-8 -*-
 
 """
 ======
@@ -15,14 +16,49 @@ Usage
 
     sloany [OPTIONS] FILES
 
+FILES is a list of filenames containing SQL queries.
+
 Options
 -------
-    -q query  : specify SQL query on the command line
-    -v	      : print version
-    -h	      : print help message
+    -q --query  : specify SQL query on the command line
+    -f --fetch  : fetch the (lite) spectra for the objects
+    -r --reduce : read the FITS file and produce a spectrum file readable by
+                  fitchi2
+    -v	        : print version
+    -h	        : print help message
+
+Example
+=======
+
+The following example retrieves survey name, plate number, MJD date,
+fiber number, right ascension and declination for all objects with the
+ANCILLARY_TARGET1 flag set to WHITEDWARF_NEW (objects for these spectra have
+been observed by the BOSS spectrometer).::
+
+    sloany -q "select top 10 s.survey,s.plate,s.mjd,s.fiberid,s.ra,s.dec from \
+        bestdr9..SpecObj as s where s.zWarning = 0 and \
+        ((s.ancillary_target1 & WHITEDWARF_NEW) > 0) and s.class = STAR"
+
+The results of this query are::
+
+    mjd            plate          fiberid        survey         ra             dec
+    ============== ============== ============== ============== ============== ==============
+    55742          4724           734            boss           241.30465      26.982166
+    55361          4077           709            boss           319.35173      4.7338973
+    55361          4077           755            boss           319.5121       4.4102067
+    55589          4446           190            boss           126.03102      31.702923
+    55737          4711           262            boss           211.08108      38.303709
+    55501          4096           836            boss           329.32275      6.06972922
+    55691          4860           700            boss           217.07998      7.0316488
+    55691          4860           830            boss           217.61187      7.5803584
+    55680          4175           460            boss           254.04522      19.700587
+    55277          3873           672            boss           217.85955      31.020043
+
+See http://www.sdss3.org/dr9/spectro/targets.php for a list of target flags.
 
 """
 
+from __future__ import print_function
 
 __author__ = "Loïc Séguin-C. <loicseguin@gmail.com>"
 __license__ = "BSD"
@@ -33,8 +69,14 @@ import argparse
 import os
 import pyfits
 import sys
-import urllib.request
-import urllib.parse
+try:
+    import urllib.request as request
+    import urllib.parse as parse
+except ImportError:
+    # Good old Python 2.
+    import urllib as request
+    import urllib as parse
+    input = raw_input
 
 
 skyserver_url='http://skyserver.sdss3.org/public/en/tools/search/x_sql.asp'
@@ -92,8 +134,8 @@ def exec_query(query):
     """
     query = remove_comments(query)
     query = subst_flags(query)
-    params = urllib.parse.urlencode({'cmd': query, 'format': 'csv'})
-    raw_results = urllib.request.urlopen(skyserver_url + '?%s' % params)
+    params = parse.urlencode({'cmd': query, 'format': 'csv'})
+    raw_results = request.urlopen(skyserver_url + '?%s' % params)
     raw_results = raw_results.read().decode('utf-8')
     raw_results = raw_results.strip().split('\n')
 
@@ -160,7 +202,7 @@ def fetch_spectra(spec_triples):
             url = sdss_url + '/%s/' % specfile[1] + specfile[0]
         print('Fetching %s...' % specfile[0])
         try:
-            urllib.request.urlretrieve(url, specfile[0])
+            request.urlretrieve(url, specfile[0])
         except (ValueError, IOError):
             print('WARNING: Could not retrieve %s.' % specfile[0],
                     file=sys.stderr)
