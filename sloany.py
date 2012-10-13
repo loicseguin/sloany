@@ -80,8 +80,7 @@ except ImportError:
 
 
 skyserver_url='http://skyserver.sdss3.org/public/en/tools/search/x_sql.asp'
-boss_url = 'http://data.sdss3.org/sas/dr9/boss/spectro/redux/v5_4_45/spectra/lite'
-sdss_url = 'http://data.sdss3.org/sas/dr9/sdss/spectro/redux/lite'
+spectra_url = 'http://data.sdss3.org/sas/dr9/sdss/spectro/redux/%s/spectra/lite'
 
 
 # Target flags for white dwarfs
@@ -153,7 +152,7 @@ def fetch_spectra(spec_triples):
     """Fetch the spectra for all objects in spec_triples. Ask user confirmation
     first.
 
-    ``spec_triples`` is a list of triples (filename, plate, survey).
+    ``spec_triples`` is a list of triples (filename, plate, run2d).
 
     """
     spec_files = list(spec_triples)
@@ -196,16 +195,18 @@ def fetch_spectra(spec_triples):
     if answer.upper() not in ('Y', 'YES'):
         return
     for specfile in spec_files:
-        if specfile[2].upper() == 'BOSS':
-            url = boss_url + '/%s/' % specfile[1] + specfile[0]
-        elif specfile[2].upper() == 'SDSS':
-            url = sdss_url + '/%s/' % specfile[1] + specfile[0]
+        if specfile[2] is None:
+            print('WARNING: to fetch the spectra, query must select run2d.' +
+                    ' Skipping file.', file=sys.stderr)
+            continue
+        url = (spectra_url % specfile[2] +
+                '/{:04d}/'.format(int(specfile[1])) + specfile[0])
         print('Fetching %s...' % specfile[0])
         try:
             request.urlretrieve(url, specfile[0])
         except (ValueError, IOError):
-            print('WARNING: Could not retrieve %s.' % specfile[0],
-                    file=sys.stderr)
+            print('WARNING: Could not retrieve {} at {}.'.format(specfile[0],
+                  url), file=sys.stderr)
 
 
 def reduce_spectra(files):
@@ -317,14 +318,14 @@ def run(argv=sys.argv[1:]):
                                 (int(obj['plate']), int(obj['mjd']),
                                 int(obj['fiberid'])))
                     spec_files.append((specfile, obj['plate'],
-                                       obj.get('survey')))
+                                       obj.get('run2d')))
                 except KeyError:
                     print(results)
                     sys.exit(1)
         if args.fetch:
             fetch_spectra(spec_files)
         if args.reduce:
-            reduce_spectra([fname for fname, plate, survey in spec_files])
+            reduce_spectra([fname for fname, plate, run2d in spec_files])
 
 
 if __name__=='__main__':
