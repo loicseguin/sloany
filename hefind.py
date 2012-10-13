@@ -18,6 +18,7 @@ __license__ = "BSD"
 __version__ = '0.1dev'
 
 
+import argparse
 import matplotlib.pyplot as plt
 import numpy
 import os
@@ -27,8 +28,6 @@ import sys
 
 
 HELIUM_LINES = [3888.65, 4471.5, 5015.678, 5875.6404, 6678.1517, 7065.2153]
-WINDOW_WIDTH = 7
-TOLERANCE = 0.1
 
 
 def read_list(f, nb_freqs):
@@ -62,7 +61,7 @@ def plot_spectrum(freqs, fluxes, min_lambda=3700, max_lambda=8000):
     plt.plot(freqs, fluxes)
     plt.xlim((min_lambda, max_lambda))
     plt.xlabel(r'$\lambda\, (\AA)$', size=16)
-    plt.ylabel(r'$H_\nu$', size=16)
+    plt.ylabel(r'$Flux$', size=16)
     #plt.axes().minorticks_on()
 
 
@@ -75,107 +74,167 @@ def make_spectrum_figure(f):
     plt.show()
 
 
-def find_line(line, wavs, fluxes):
-    """Determine whether there is an absorption or emission line at wavelength
-    ``line`` for the spectra given by ``wavs`` and ``flux``."""
-    for i, wav in enumerate(wavs):
-        if wav > line:
-            break
-    # Find the NB_FOR_AVG wavelengths around the line center and calculate the
-    # average. Do the same for the continuum to the left and to the right.
-    low = i - NB_FOR_AVG//2
-    hi = low + NB_FOR_AVG
-    in_line = (numpy.mean(wavs[low:hi]), numpy.mean(fluxes[low:hi]))
-    low = low - NB_CONTINUUM
-    hi = low + NB_FOR_AVG
-    blue = (numpy.mean(wavs[low:hi]), numpy.mean(fluxes[low:hi]))
-    low = i + NB_FOR_AVG//2 + NB_CONTINUUM
-    hi = low + NB_FOR_AVG
-    red = (numpy.mean(wavs[low:hi]), numpy.mean(fluxes[low:hi]))
-
-    # If the flux in the line is above or below the linear interpolation
-    # between the blue and the red points, then a line has been found.
-    flux_continuum = ((in_line[0] - blue[0])*(blue[1] - red[1]) / (blue[0] -
-                      red[0]) + blue[1])
-    diff = flux_continuum - in_line[1]
-    if diff > 0 and diff > TOL:
-        return 'ABSORPTION'
-    elif diff < 0 and abs(diff) > TOL:
-        return 'EMISSION'
-    return None
+def find_centers(line_complex):
+    """Given a line complex in the (smoothed, corrected) spectrum, determine
+    all line centers using a zero crossings approach."""
+    # There is a line where the flux is at a minimum, i.e., the second
+    # derivative is positive.
+    diff2 = numpy.diff(numpy.sign(numpy.diff(line_complex)))
+    zero_crossings = numpy.where(diff2 > 0.)[0]
+    return zero_crossings + 1
 
 
-def find_minima(wavs, fluxes):
-    """Find the minima in the spectra by using the zero crossings of the first
-    derivative to identify the critical points. The flux should be smoothed
-    before calling this function.
+def find_lines(fluxes, smoothed, corrected, threshold=1., fraction_pts=0.2,
+        wavs=None, plot=False):
+    """Find all the spectral lines (i.e., valleys) in the spectrum ``fluxes``
+    given a corrected version of the spectrum ``corrected``.
 
+    Return a list of pairs (line center index, signal to nois ratio for the
+    line).
     """
-    diff = np.diff(fluxes)
-    zero_crossings = np.where(np.diff(np.sign(diff)))[0]
+    line_indices = []
+    window_width = int(len(fluxes) * fraction_pts / 2) * 2 + 1
+    half_width = window_width // 2
+    # Reflect the endpoints of the spectrum.
+    x = numpy.concatenate((fluxes[half_width:0:-1], fluxes,
+        fluxes[-2:-half_width - 2:-1]))
+    xs = numpy.concatenate((smoothed[half_width:0:-1], smoothed,
+                           smoothed[-2:-half_width - 2:-1]))
+    # Residual decribes the noise.
+    residual = numpy.abs(x - xs)
+    # The noise is the average residual over a window of width
+    # ``window_width``.  noise has same length as fluxes
+    noise = numpy.convolve(residual, numpy.ones(window_width) / window_width,
+                           'valid')
+
+    # If the plot flag is on, show the line complex and the lines that are
+    # found.
+    if plot:
+        if wavs is None:
+            wavs = range(len(fluxes))
+        plt.plot(wavs, corrected, wavs, -noise)
+
+    # A line complex is found if the flux value is smaller than ``threshold``
+    # times the average noise.
+    pos = 0
+    max_pos = len(corrected)
+    while pos < max_pos:
+        min_pos = pos # Lowest index for line
+        while (pos < max_pos and corrected[pos] < -threshold * noise[pos]):
+            pos += 1
+        # Check if a line complex has been found
+        if pos > min_pos:
+            if plot:
+                plt.axvspan(wavs[min_pos], wavs[pos - 1], color='g', alpha=0.1)
+            # Find the line center for each line in the complex.
+            centers = min_pos + find_centers(corrected[min_pos:pos])
+
+            # Calculate signal to noise ratio for the line.
+            for center in centers:
+                sn = residual[center + half_width] / noise[center]
+                line_indices.append((center, sn))
+        pos += 1
+
+    if plot:
+        for line, sn in line_indices:
+            plt.axvline(x=wavs[line], color='r', alpha=0.3, linewidth=2)
+        plt.show()
+
+    return line_indices
 
 
-def baseline(fluxes):
-    nbpts = 0.2*len(fluxes)
+def baseline(fluxes, fraction_pts=0.2):
+    """Correct the baseline of the spectrum whose ordinate values are in
+    ``fluxes``. Baseline correction uses the white top hat algorithm."""
+    nb_pts = fraction_pts * len(fluxes)
+    # Top hat fits the lowest values. Since most spectrum have
+    # absorption lines and that the continuum plays the role of baseline, the
+    # flux must first be reflected along the abscissa.
     y = -fluxes
-    structure = numpy.ones(nbpts)
+    structure = numpy.ones(nb_pts)
     z = scipy.ndimage.morphology.white_tophat(y, None, structure)
+
+    # Reflect the baseline corrected flux and return it.
     return -z
 
 
-def smooth_spectra(fluxes, window_width=7, passes=3):
+def smooth_spectrum(fluxes, window_width=7, passes=3):
     """Produce a smoothed version of the spectra using a sliding window
     approach."""
-    flux_len = len(fluxes)
     smoothed = numpy.array(fluxes)
-    resmoothed = numpy.array(fluxes)
-    for j in range(passes):
-        for i in range(flux_len):
-            low = i - window_width // 2
-            if low < 0: low = 0
-            hi = low + window_width
-            if hi > flux_len: hi = flux_len
-            smoothed[i] = numpy.mean(resmoothed[low:hi])
-        resmoothed = numpy.array(smoothed)
+    weights = numpy.ones(window_width) / window_width
+    half_width = window_width // 2
+    for i in range(passes):
+        smoothed = numpy.concatenate((smoothed[half_width:0:-1], smoothed,
+                smoothed[-2:-half_width - 2: -1]))
+        smoothed = numpy.convolve(smoothed, weights, 'valid')
     return smoothed
 
 
-if __name__ == "__main__":
-    for fname in sys.argv[1:]:
-        f = open(fname)
-        nb_wavs = int(f.readline().split()[0])
-        wavs = read_list(f, nb_wavs)
-        fluxes = read_list(f, nb_wavs)
-        smoothed = smooth_spectra(fluxes)
-        basel = baseline(smoothed)
-        #plot_spectrum(wavs, fluxes)
-        #plot_spectrum(wavs, basel)
-        #plt.show()
+def find_helium(fname, plot=False, plot_all=False, verbose=False,
+        threshold=1.0):
+    """Open the spectrum file ``fname`` and determine whether there are traces
+    of helium."""
+    f = open(fname)
+    nb_wavs = int(f.readline().split()[0])
+    wavs = read_list(f, nb_wavs)
+    fluxes = read_list(f, nb_wavs)
+    f.close()
 
-        min_flux = numpy.min(basel)
-        threshold = 0.1*min_flux
-        pos = 0
-        lines = []
-        while pos < len(basel):
-            min_pos = pos
-            while pos < len(basel) and basel[pos] < threshold:
-                pos += 1
-            if pos > min_pos:
-                lines.append(wavs[(pos+min_pos)//2])
-            pos += 1
+    # Smooth the spectrum and correct its baseline, i.e., transform the
+    # continuum into a straight line.
+    smoothed = smooth_spectrum(fluxes)
+    corrected = baseline(smoothed)
+    #plot_spectrum(wavs, fluxes)
+    #plt.plot(wavs, smoothed)
+    #plot_spectrum(wavs, corrected)
+    #plt.show()
 
-        found = []
-        for line in lines:
-            for heline in HELIUM_LINES:
-                if abs(line - heline) < 5.:
-                    found.append(line)
-        if len(found) >= 2:
-            print(fname)
+    line_indices_sn = find_lines(fluxes, smoothed, corrected, wavs=wavs,
+            plot=plot_all, threshold=threshold)
 
-        if found:
+    found = []
+    for line_index, sn in line_indices_sn:
+        for heline in HELIUM_LINES:
+            # Tolerate a 5 angstrom difference.
+            if abs(wavs[line_index] - heline) < 5.:
+                found.append((wavs[line_index], sn))
+    if len(found) >= 2:
+        print(fname)
+        if verbose:
+            for line, sn in found:
+                print('   line {:.1f} angstrom; S/N {:.2f}'.format(line, sn))
+        if plot:
             plot_spectrum(wavs, fluxes)
-            ylims = plt.ylim()
-            for line in found:
+            for line, sn in found:
                 plt.axvline(x=line, color='r', alpha=0.2, linewidth=2)
             plt.show()
+
+
+def run(argv=sys.argv[1:]):
+    """Parse the command line arguments and run the appropriate command."""
+    clparser = argparse.ArgumentParser(description='Determine whether there' +
+            ' are traces of helium in a given spectrum.')
+    clparser.add_argument('-v', '--version', action='version',
+            version='%(prog)s ' + __version__)
+    clparser.add_argument('-a', '--plot-all', action='store_true',
+            help='draw plot showing all the lines found in spectrum')
+    clparser.add_argument('-p', '--plot', action='store_true',
+            help='draw plot showing helium lines in spectrum')
+    clparser.add_argument('filenames', nargs='+',
+            help='spectrum files to process')
+    clparser.add_argument('--verbose', action='store_true',
+            help='verbose output (prints lines and signal to noise ratio)')
+    clparser.add_argument('-t', '--threshold', nargs='?', type=float,
+            const=1.0, default=1.0,
+            help='a signal raises that many times above the background noise')
+    args = clparser.parse_args(argv)
+
+    for fname in args.filenames:
+        find_helium(fname, plot=args.plot, plot_all=args.plot_all,
+                verbose=args.verbose, threshold=args.threshold)
+
+
+if __name__ == "__main__":
+    run()
 
