@@ -22,13 +22,13 @@ import matplotlib.pyplot as plt
 import numpy
 import os
 import scipy
+import scipy.ndimage.morphology
 import sys
 
 
 HELIUM_LINES = [3888.65, 4471.5, 5015.678, 5875.6404, 6678.1517, 7065.2153]
-NB_FOR_AVG = 7
-NB_CONTINUUM = 30
-TOL = 2.
+WINDOW_WIDTH = 7
+TOLERANCE = 0.1
 
 
 def read_list(f, nb_freqs):
@@ -75,12 +75,6 @@ def make_spectrum_figure(f):
     plt.show()
 
 
-def noise(wavs, fluxes):
-    """Calculate the amplitude of the noise for the spectrum given by wavs and
-    fluxes."""
-    pass
-
-
 def find_line(line, wavs, fluxes):
     """Determine whether there is an absorption or emission line at wavelength
     ``line`` for the spectra given by ``wavs`` and ``flux``."""
@@ -111,17 +105,35 @@ def find_line(line, wavs, fluxes):
     return None
 
 
-def smooth_spectra(wavs, fluxes):
+def find_minima(wavs, fluxes):
+    """Find the minima in the spectra by using the zero crossings of the first
+    derivative to identify the critical points. The flux should be smoothed
+    before calling this function.
+
+    """
+    diff = np.diff(fluxes)
+    zero_crossings = np.where(np.diff(np.sign(diff)))[0]
+
+
+def baseline(fluxes):
+    nbpts = 0.2*len(fluxes)
+    y = -fluxes
+    structure = numpy.ones(nbpts)
+    z = scipy.ndimage.morphology.white_tophat(y, None, structure)
+    return -z
+
+
+def smooth_spectra(fluxes, window_width=7, passes=3):
     """Produce a smoothed version of the spectra using a sliding window
     approach."""
     flux_len = len(fluxes)
     smoothed = numpy.array(fluxes)
     resmoothed = numpy.array(fluxes)
-    for j in range(3):
-        for i in range(len(wavs)):
-            low = i - NB_FOR_AVG // 2
+    for j in range(passes):
+        for i in range(flux_len):
+            low = i - window_width // 2
             if low < 0: low = 0
-            hi = low + NB_FOR_AVG
+            hi = low + window_width
             if hi > flux_len: hi = flux_len
             smoothed[i] = numpy.mean(resmoothed[low:hi])
         resmoothed = numpy.array(smoothed)
@@ -134,18 +146,29 @@ if __name__ == "__main__":
         nb_wavs = int(f.readline().split()[0])
         wavs = read_list(f, nb_wavs)
         fluxes = read_list(f, nb_wavs)
-        smoothed = smooth_spectra(wavs, fluxes)
-        plot_spectrum(wavs, fluxes)
-        plot_spectrum(wavs, smoothed)
-        plt.show()
+        smoothed = smooth_spectra(fluxes)
+        basel = baseline(smoothed)
+        #plot_spectrum(wavs, fluxes)
+        #plot_spectrum(wavs, basel)
+        #plt.show()
+
+        min_flux = numpy.min(basel)
+        threshold = 0.1*min_flux
+        pos = 0
+        lines = []
+        while pos < len(basel):
+            min_pos = pos
+            while pos < len(basel) and basel[pos] < threshold:
+                pos += 1
+            if pos > min_pos:
+                lines.append(wavs[(pos+min_pos)//2])
+            pos += 1
 
         found = []
-        for line in HELIUM_LINES:
-            line_type = find_line(line, wavs, fluxes)
-            if line_type:
-                #print('   Found He {} line at {} angstrom'.format(
-                                          #line_type.lower(), line))
-                found.append(line)
+        for line in lines:
+            for heline in HELIUM_LINES:
+                if abs(line - heline) < 5.:
+                    found.append(line)
         if len(found) >= 2:
             print(fname)
 
