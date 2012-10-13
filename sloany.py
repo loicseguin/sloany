@@ -41,18 +41,18 @@ been observed by the BOSS spectrometer).::
 
 The results of this query are::
 
-    mjd            plate          fiberid        survey         ra             dec
-    ============== ============== ============== ============== ============== ==============
-    55742          4724           734            boss           241.30465      26.982166
-    55361          4077           709            boss           319.35173      4.7338973
-    55361          4077           755            boss           319.5121       4.4102067
-    55589          4446           190            boss           126.03102      31.702923
-    55737          4711           262            boss           211.08108      38.303709
-    55501          4096           836            boss           329.32275      6.06972922
-    55691          4860           700            boss           217.07998      7.0316488
-    55691          4860           830            boss           217.61187      7.5803584
-    55680          4175           460            boss           254.04522      19.700587
-    55277          3873           672            boss           217.85955      31.020043
+    mjd      plate    fiberid  survey   ra        dec
+    ======== ======== ======== ======== ========= ==========
+    55742    4724     734      boss     241.30465 26.982166
+    55361    4077     709      boss     319.35173 4.7338973
+    55361    4077     755      boss     319.5121  4.4102067
+    55589    4446     190      boss     126.03102 31.702923
+    55737    4711     262      boss     211.08108 38.303709
+    55501    4096     836      boss     329.32275 6.06972922
+    55691    4860     700      boss     217.07998 7.0316488
+    55691    4860     830      boss     217.61187 7.5803584
+    55680    4175     460      boss     254.04522 19.700587
+    55277    3873     672      boss     217.85955 31.020043
 
 See http://www.sdss3.org/dr9/spectro/targets.php for a list of target flags.
 
@@ -259,14 +259,14 @@ def print_results(results):
         return
     keys = results[0].keys()
     for key in keys:
-        print('{:<15}'.format(key), end='')
+        print('{:<11}'.format(key), end='')
     print()
     for key in keys:
-        print('{:<15}'.format(14*'='), end='')
+        print('{:<11}'.format(10*'='), end='')
     print()
     for result in results:
         for key in keys:
-            print('{:<15}'.format(result[key]), end='')
+            print('{:<11}'.format(result[key]), end='')
         print()
 
 
