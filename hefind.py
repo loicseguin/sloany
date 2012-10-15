@@ -27,7 +27,11 @@ import scipy.ndimage.morphology
 import sys
 
 
-HELIUM_LINES = [3888.65, 4471.5, 5015.678, 5875.6404, 6678.1517, 7065.2153]
+# The 3888.65 He I line is very close to lots of strong lines for other
+# elements and may lead to many false positives.
+HELIUM_I_LINES = [3888.65, 4471.5, 5015.678, 5875.6404, 6678.1517, 7065.2153]
+HELIUM_II_LINES = [4685.7]
+HELIUM_LINES = HELIUM_I_LINES + HELIUM_II_LINES
 
 
 def read_list(f, nb_freqs):
@@ -152,7 +156,8 @@ def baseline(fluxes, fraction_pts=0.2):
     # flux must first be reflected along the abscissa.
     y = -fluxes
     structure = numpy.ones(nb_pts)
-    z = scipy.ndimage.morphology.white_tophat(y, None, structure)
+    z = scipy.ndimage.morphology.white_tophat(y, structure=structure,
+                                              mode='reflect')
 
     # Reflect the baseline corrected flux and return it.
     return -z

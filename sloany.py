@@ -237,7 +237,9 @@ def reduce_spectra(files):
 
 
 def write_flux(fname, wavs, flux):
-    """Write the flux to file named fname in a format that fitchi2 understands."""
+    """Write the flux to file named fname in a format that fitchi2 understands.
+    Multiply the flux by 1e-17 since SDSS fluxes are given in 1e-17
+    erg/cm^2/s/angstrom."""
     f = open(fname, 'w')
     f.write(str(len(wavs)))
     for i, wav in enumerate(wavs):
@@ -247,7 +249,7 @@ def write_flux(fname, wavs, flux):
     for i, fluxi in enumerate(flux):
         if i % 6 == 0:
             f.write('\n')
-        f.write('%12.5e' % fluxi)
+        f.write('%12.5e' % (fluxi * 1e-17))
     f.write('\n')
     f.close()
     return
