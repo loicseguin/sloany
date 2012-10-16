@@ -212,6 +212,9 @@ def fetch_spectra(spec_triples):
         try:
             request.urlretrieve(url, specfile[0])
         except (ValueError, IOError):
+            f = open('Failed_Fetches', 'a')
+            f.write(specfile[0] + '\n')
+            f.close()
             print('WARNING: Could not retrieve {} at {}.'.format(specfile[0],
                   url), file=sys.stderr)
 
