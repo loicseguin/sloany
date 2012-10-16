@@ -94,8 +94,15 @@ STD_WD = 2**21
 # LEGACY_TARGET1
 STAR_WHITE_DWARF = 2**19
 
+# SEGUE1_TARGET1
+SEGUE1_CWD = 2**17
+SEGUE1_WD = 2**19
+
+# SEGUE2_TARGET1
+SEGUE2_CWD = 2**10
+
 TARGET_FLAGS = ['WHITEDWARF_NEW', 'WHITEDWARF_SDSS', 'STD_WD',
-                'STAR_WHITE_DWARF']
+                'STAR_WHITE_DWARF', 'SEGUE1_CWD', 'SEGUE1_WD', 'SEGUE2_CWD']
 
 # Classes
 GALAXY = 'GALAXY'
@@ -108,7 +115,7 @@ def remove_comments(stmt):
     """Remove comments from SQL statement."""
     fsql = ''
     for line in stmt.split('\n'):
-        fsql += line.split('--')[0] + '\n'
+        fsql += ' ' + line.split('--')[0]
     return fsql
 
 
@@ -238,8 +245,7 @@ def reduce_spectra(files):
 
 def write_flux(fname, wavs, flux):
     """Write the flux to file named fname in a format that fitchi2 understands.
-    Multiply the flux by 1e-17 since SDSS fluxes are given in 1e-17
-    erg/cm^2/s/angstrom."""
+    """
     f = open(fname, 'w')
     f.write(str(len(wavs)))
     for i, wav in enumerate(wavs):
@@ -249,7 +255,7 @@ def write_flux(fname, wavs, flux):
     for i, fluxi in enumerate(flux):
         if i % 6 == 0:
             f.write('\n')
-        f.write('%12.5e' % (fluxi * 1e-17))
+        f.write('%12.5e' % (fluxi))
     f.write('\n')
     f.close()
     return
@@ -271,6 +277,63 @@ def print_results(results):
         for key in keys:
             print('{:<11}'.format(result[key]), end='')
         print()
+
+
+def specfile_name(obj):
+    """Determine the name of the spectrum fits file for object."""
+    specfile = 'spec-{:04d}-{:05d}-{:04d}.fits'.format(
+                int(obj['plate']), int(obj['mjd']),
+                int(obj['fiberid']))
+    return specfile
+
+
+def sdss_name(ra, dec):
+    """Determine the SDSS official name from the right ascension and the
+    declination in degrees."""
+    ra = float(ra)
+    dec = float(dec)
+    SECONDS_PER_HOUR = 3600
+    SECONDS_PER_DAY = 24 * 3600
+    sec = ra * SECONDS_PER_DAY / 360.
+    hours = int(sec / SECONDS_PER_HOUR)
+    minutes = int((sec % SECONDS_PER_HOUR) / 60.)
+    sec = '{:08.5f}'.format(sec % 60.)[:5] # Truncate, don't round
+    if dec >= 0:
+        sign = '+'
+    else:
+        sign = '-'
+        dec = -dec
+    degrees = int(dec)
+    decmins = int((dec % 1) * 60.)
+    decsecs = '{:08.5f}'.format(3600*(dec % 1) - 60 *  decmins)[:4]
+    name = 'J{:02d}{:02d}{}{}{:02d}{:02d}{}'.format(
+            hours, minutes, sec, sign, degrees, decmins, decsecs)
+    short_name = 'J{:02d}{:02d}{}{:02d}{:02d}'.format(
+            hours, minutes, sign, degrees, decmins)
+    return name, short_name
+
+
+def get_ra_dec(fname):
+    """From the file name, extract the plate, MJD and fiber id and use these to
+    grab the right ascension and declination for the object."""
+    plate, mjd, fiberid = os.path.basename(fname)[:-4].split('-')[1:]
+    query = "select s.survey,s.plate,s.mjd,s.fiberid,s.ra,s.dec from \
+             bestdr9..SpecObj as s where s.plate={} and s.mjd={} and \
+             s.fiberid={}".format(plate, mjd, fiberid)
+    results = sloany.exec_query(query)
+    return float(results[0]['ra']), float(results[0]['dec'])
+
+
+def write_metadata(results):
+    """If the results contain the right ascension and declination, create a
+    metadata file containing the list of spectrum files along with the SDSS
+    name for the object."""
+    meta = open('METADATA', 'w')
+    for obj in results:
+        if 'ra' in obj and 'dec' in obj:
+            meta.write('{}    {}    {}\n'.format(specfile_name(obj),
+                                         *sdss_name(obj['ra'], obj['dec'])))
+    meta.close()
 
 
 def run(argv=sys.argv[1:]):
@@ -312,13 +375,12 @@ def run(argv=sys.argv[1:]):
             print('ERROR: query did not provide any results.', file=sys.stderr)
             sys.exit(1)
         print_results(results)
+        write_metadata(results)
         if args.fetch or args.reduce:
             spec_files = []
             for obj in results:
                 try:
-                    specfile = ('spec-%04d-%05d-%04d.fits' %
-                                (int(obj['plate']), int(obj['mjd']),
-                                int(obj['fiberid'])))
+                    specfile = specfile_name(obj)
                     spec_files.append((specfile, obj['plate'],
                                        obj.get('run2d')))
                 except KeyError:
