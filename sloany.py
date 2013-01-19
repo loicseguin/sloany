@@ -69,6 +69,7 @@ import argparse
 import os
 import pyfits
 import sys
+import shutil
 try:
     import urllib.request as request
     import urllib.parse as parse
@@ -80,7 +81,8 @@ except ImportError:
 
 
 skyserver_url='http://skyserver.sdss3.org/public/en/tools/search/x_sql.asp'
-spectra_url = 'http://data.sdss3.org/sas/dr9/sdss/spectro/redux/%s/spectra/lite'
+spectra_url_westcoast = 'http://data.sdss3.org/sas/dr9/sdss/spectro/redux/%s/spectra/lite'
+spectra_url = 'http://mirror.sdss3.org/sas/dr9/sdss/spectro/redux/%s/spectra/lite'
 
 
 # Target flags for white dwarfs
@@ -155,7 +157,7 @@ def exec_query(query):
     return results
 
 
-def fetch_spectra(spec_triples):
+def fetch_spectra(spec_triples, dest='.'):
     """Fetch the spectra for all objects in spec_triples. Ask user confirmation
     first.
 
@@ -165,12 +167,12 @@ def fetch_spectra(spec_triples):
     spec_files = list(spec_triples)
     existing = []
     for specfile in spec_files:
-        if os.path.exists(specfile[0]):
+        if os.path.exists(os.path.join(dest, specfile[0])):
             existing.append(specfile)
 
     # Ask user if he wants to fetch the spectra.
     if existing:
-        print('\nSome spectra seem to be already present in the current ' +
+        print('\nSome spectra seem to be already present in the destination ' +
               'directory.\nDo you want to fetch all spectra [A], ' +
               'only the missing spectra [Y], or nothing [N].')
         if len(spec_files) <= 10:
@@ -208,9 +210,11 @@ def fetch_spectra(spec_triples):
             continue
         url = (spectra_url % specfile[2] +
                 '/{:04d}/'.format(int(specfile[1])) + specfile[0])
-        print('Fetching %s...' % specfile[0])
+        destfile = os.path.join(dest, specfile[0])
+        print('Fetching {} --> {}'.format(specfile[0], destfile))
         try:
             request.urlretrieve(url, specfile[0])
+            shutil.move(specfile[0], destfile)
         except (ValueError, IOError):
             f = open('Failed_Fetches', 'a')
             f.write(specfile[0] + '\n')
@@ -219,30 +223,59 @@ def fetch_spectra(spec_triples):
                   url), file=sys.stderr)
 
 
-def reduce_spectra(files):
+def reduce_spectra(fitsfiles, sdss_longs, dest='.'):
     """Produce a clean text file containing the spectra for each file in
     files."""
-    print('\nDo you want to reduce the following spectra?')
-    if len(files) <= 10:
-        for fname in files:
-            if fname:
-                print(fname)
+    existing = []
+    fits_sdss = zip(fitsfiles, sdss_longs)
+    for fitsfile, sdss_long in fits_sdss:
+        if os.path.exists(os.path.join(dest, sdss_long)):
+            existing.append((fitsfile, sdss_long))
+
+    if existing:
+        print('\nSome reduced spectra seem to be already present in the ' +
+              'destination directory.\n' +
+              'Do you want to reduce all spectra [A], ' +
+              'only the missing spectra [Y], or nothing [N].')
+        if len(fitsfiles) <= 10:
+            for fitsfile, sdss_long in fits_sdss:
+                if (fitsfile, sdss_long) in existing:
+                    print(fitsfile + '\tExisting')
+                else:
+                    print(fitsfile)
+        else:
+            print("{} spectra files".format(len(fitsfiles)))
+            print("{} existing files".format(len(existing)))
+        answer = input('A/Y/N [Y]:  ')
+        answer = answer or 'Y'
+        if answer.upper() in ('Y', 'YES'):
+            for fitsfile, sdss_long in existing:
+                fits_sdss.remove((fitsfile, sdss_long))
+        if answer.upper() in ('A', 'ALL'):
+            answer = 'Y'
     else:
-        print("{} spectra files".format(len(files)))
-    answer = input('Y/N [Y]:  ')
-    answer = answer or 'Y'
+        print('\nDo you want to reduce the following spectra?')
+        if len(fitsfiles) <= 10:
+            for fname in fitsfiles:
+                if fname:
+                    print(fname)
+        else:
+            print("{} spectra files".format(len(fitsfiles)))
+        answer = input('Y/N [Y]:  ')
+        answer = answer or 'Y'
+
     if answer.upper() not in ('Y', 'YES'):
         return
-    for fname in files:
+    for fname, sdss_long in fits_sdss:
         if not fname:
             continue
-        print('Reducing {}'.format(fname))
+        out_fname = os.path.join(dest, sdss_long)
+        print('Reducing {} --> {}'.format(fname, out_fname))
         f = pyfits.open(fname)
         coadd = f[1]
         fluxes = coadd.data.field('flux')
         wavs = 10**coadd.data.field('loglam')
         assert len(fluxes) == len(wavs)
-        out_fname = os.path.splitext(os.path.basename(fname))[0] + '_red'
         write_flux(out_fname, wavs, fluxes)
 
 
@@ -280,6 +313,7 @@ def print_results(results):
         for key in keys:
             print('{:<11}'.format(result[key]), end='')
         print()
+    print('Query returned {} objects'.format(len(results)))
 
 
 def specfile_name(obj):
@@ -319,11 +353,11 @@ def sdss_name(ra, dec):
 def get_ra_dec(fname):
     """From the file name, extract the plate, MJD and fiber id and use these to
     grab the right ascension and declination for the object."""
-    plate, mjd, fiberid = os.path.basename(fname)[:-4].split('-')[1:]
-    query = "select s.survey,s.plate,s.mjd,s.fiberid,s.ra,s.dec from \
+    plate, mjd, fiberid = obj['plate'], obj['mjd'], obj['fiberid']
+    query = "select s.ra,s.dec from \
              bestdr9..SpecObj as s where s.plate={} and s.mjd={} and \
              s.fiberid={}".format(plate, mjd, fiberid)
-    results = sloany.exec_query(query)
+    results = exec_query(query)
     return float(results[0]['ra']), float(results[0]['dec'])
 
 
@@ -332,11 +366,21 @@ def write_metadata(results):
     metadata file containing the list of spectrum files along with the SDSS
     name for the object."""
     meta = open('METADATA', 'w')
+    metadata = []
     for obj in results:
+        longname = ''
         if 'ra' in obj and 'dec' in obj:
-            meta.write('{}    {}    {}\n'.format(specfile_name(obj),
-                                         *sdss_name(obj['ra'], obj['dec'])))
+            longname, shortname = sdss_name(obj['ra'], obj['dec'])
+        else:
+            longname, shortname = sdss_name(*get_ra_dec(obj))
+        if not longname:
+            continue
+        metainfo = (specfile_name(obj), longname, shortname)
+        metadata.append(metainfo)
+        meta.write('{}    {}    {}\n'.format(*metainfo))
+    print('Wrote METADATA file with {} objects.'.format(len(metadata)))
     meta.close()
+    return metadata
 
 
 def run(argv=sys.argv[1:]):
@@ -349,10 +393,14 @@ def run(argv=sys.argv[1:]):
             help='SQL query to execute on the skyserver')
     clparser.add_argument('filenames', help='files containing SQL commands to be'
             + ' executed on the skyserver', nargs='*')
-    clparser.add_argument('-f', '--fetch', action='store_true',
-            help='fetch the spectrum file for each object')
-    clparser.add_argument('-r', '--reduce', action='store_true',
-            help='create a file with the wavelengths and fluxes')
+    clparser.add_argument('-f', '--fetch', nargs='?', const='.',
+            metavar='FOLDER',
+            help='fetch the spectrum file for each object. If optional ' +
+            'FOLDER is provided, put the spectrum files in that folder.')
+    clparser.add_argument('-r', '--reduce', nargs='?', const='.',
+            help='create a file with the wavelengths and fluxes.' +
+            ' If optional argument is provided, put the reduced spectrum ' +
+            ' files in that folder.', metavar='FOLDER')
     args = clparser.parse_args(argv)
 
     # Make a list of all queries.
@@ -378,8 +426,8 @@ def run(argv=sys.argv[1:]):
             print('ERROR: query did not provide any results.', file=sys.stderr)
             sys.exit(1)
         print_results(results)
-        write_metadata(results)
-        if args.fetch or args.reduce:
+        metadata = write_metadata(results)
+        if args.fetch:
             spec_files = []
             for obj in results:
                 try:
@@ -389,10 +437,14 @@ def run(argv=sys.argv[1:]):
                 except KeyError:
                     print(results)
                     sys.exit(1)
-        if args.fetch:
-            fetch_spectra(spec_files)
+            fetch_spectra(spec_files, dest=args.fetch)
         if args.reduce:
-            reduce_spectra([fname for fname, plate, run2d in spec_files])
+            fitsfiles = []
+            sdss_longs = []
+            for fitsfile, sdss_long, sdss_short in metadata:
+                fitsfiles.append(fitsfile)
+                sdss_longs.append(sdss_long)
+            reduce_spectra(fitsfiles, sdss_longs, dest=args.reduce)
 
 
 if __name__=='__main__':
