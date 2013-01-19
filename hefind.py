@@ -93,7 +93,7 @@ def find_lines(fluxes, smoothed, corrected, threshold=1., fraction_pts=0.2,
     """Find all the spectral lines (i.e., valleys) in the spectrum ``fluxes``
     given a corrected version of the spectrum ``corrected``.
 
-    Return a list of pairs (line center index, signal to nois ratio for the
+    Return a list of pairs (line center index, signal to noise ratio for the
     line).
     """
     line_indices = []
